@@ -1,10 +1,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:theme="@style/AppTheme" android:label="Dual Display Test" android:resizeableActivity="true">
-        <activity android:name=".MainActivity" android:screenOrientation="sensorLandscape" android:exported="true">
+    <application
+        android:theme="@style/AppTheme"
+        android:label="Dual Display Test"
+        android:resizeableActivity="true">
+        <activity
+            android:name=".ExternalDesktopActivity"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation" />
+        <activity
+            android:name=".MainActivity"
+            android:resizeableActivity="true"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <meta-data android:name="com.samsung.android.multidisplay.keep_process_alive" android:value="true" />
+        <meta-data android:name="com.samsung.android.dex.launchwidth" android:value="0" />
+        <meta-data android:name="com.samsung.android.dex.launchheight" android:value="0" />
     </application>
 </manifest>
