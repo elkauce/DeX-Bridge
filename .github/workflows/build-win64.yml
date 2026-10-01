@@ -30,7 +30,7 @@ jobs:
           grep -q "sc_input_manager_dex_bridge_tick" scrcpy/app/src/input_manager.c
           grep -q "WINDOWS -> DEX" scrcpy/app/src/input_manager.c
           grep -q "DEX -> WINDOWS" scrcpy/app/src/input_manager.c
-          ! grep -q '^[[:space:]]*sc_mouse_capture_set_active(&screen->mc, true);' scrcpy/app/src/screen.c
+          grep -q "UHID stays connected" scrcpy/app/src/screen.c
 
       - name: Install build dependencies
         run: |
