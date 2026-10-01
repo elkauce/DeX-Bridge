@@ -1,0 +1,97 @@
+name: Sign DeX Bridge Win64
+
+on:
+  workflow_dispatch:
+    inputs:
+      unsigned_run_id:
+        description: "Successful Build DeX Bridge Win64 run ID containing DeX-Bridge-Test-Package"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  sign:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require signing credentials
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.DEXBRIDGE_SIGNING_PFX_B64 }}
+          PFX_PASSWORD: ${{ secrets.DEXBRIDGE_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PFX_B64) -or [string]::IsNullOrWhiteSpace($env:PFX_PASSWORD)) {
+            throw "Trusted Authenticode signing credentials are not configured. See docs/WINDOWS-SIGNING.md"
+          }
+
+      - name: Download unsigned engineering artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: DeX-Bridge-Test-Package
+          run-id: ${{ inputs.unsigned_run_id }}
+          github-token: ${{ github.token }}
+          path: incoming
+
+      - name: Extract payload
+        shell: pwsh
+        run: |
+          Expand-Archive incoming/DeX-Bridge-Test-win64.zip -DestinationPath signed
+          if (!(Test-Path signed/package/bin/scrcpy.exe)) { throw "scrcpy.exe missing from payload" }
+
+      - name: Import trusted signing certificate
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.DEXBRIDGE_SIGNING_PFX_B64 }}
+          PFX_PASSWORD: ${{ secrets.DEXBRIDGE_SIGNING_PFX_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP/dexbridge-signing.pfx", [Convert]::FromBase64String($env:PFX_B64))
+
+      - name: Sign executable payload
+        shell: pwsh
+        env:
+          PFX_PASSWORD: ${{ secrets.DEXBRIDGE_SIGNING_PFX_PASSWORD }}
+        run: |
+          $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object FullName -Match '\\x64\\' | Select-Object -Last 1).FullName
+          if (!$signtool) { throw "signtool.exe not found" }
+          $files = Get-ChildItem signed/package/bin -File | Where-Object { $_.Extension -in '.exe','.dll' }
+          foreach ($f in $files) {
+            & $signtool sign /f "$env:RUNNER_TEMP/dexbridge-signing.pfx" /p $env:PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Signing failed: $($f.Name)" }
+          }
+
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem signed/package/bin -File | Where-Object { $_.Extension -in '.exe','.dll' }
+          $bad = @()
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($s.Status) / $($s.SignerCertificate.Subject)"
+            if ($s.Status -ne 'Valid') { $bad += $f.Name }
+          }
+          if ($bad.Count) { throw "Invalid signatures: $($bad -join ', ')" }
+
+      - name: Rebuild hashes and package
+        shell: pwsh
+        run: |
+          Get-ChildItem signed/package/bin -File | Where-Object { $_.Extension -in '.exe','.dll' } | Sort-Object Name | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  bin/$($_.Name)"
+          } | Set-Content signed/package/SHA256SUMS.txt
+          Compress-Archive signed/package/* DeX-Bridge-SIGNED-win64.zip
+          (Get-FileHash DeX-Bridge-SIGNED-win64.zip -Algorithm SHA256).Hash.ToLower() | Set-Content DeX-Bridge-SIGNED-win64.zip.sha256
+
+      - name: Upload signed package
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeX-Bridge-SIGNED-win64
+          path: |
+            DeX-Bridge-SIGNED-win64.zip
+            DeX-Bridge-SIGNED-win64.zip.sha256
+          if-no-files-found: error
