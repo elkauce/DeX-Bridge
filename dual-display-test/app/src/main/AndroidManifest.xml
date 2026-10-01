@@ -5,6 +5,7 @@
         android:resizeableActivity="true">
         <activity
             android:name=".ExternalDesktopActivity"
+            android:exported="true"
             android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|uiMode|keyboard|keyboardHidden|navigation" />
         <activity
