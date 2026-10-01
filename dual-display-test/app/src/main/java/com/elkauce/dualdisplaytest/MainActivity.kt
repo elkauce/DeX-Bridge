@@ -1,42 +1,38 @@
 package com.elkauce.dualdisplaytest
 
-import android.app.*
-import android.content.*
+import android.app.Activity
+import android.app.ActivityOptions
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.provider.Settings
 import android.util.DisplayMetrics
-import android.view.*
-import android.widget.*
+import android.view.Display
+import android.view.Gravity
+import android.view.View
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 
 class MainActivity : Activity(), DisplayManager.DisplayListener {
     private lateinit var dm: DisplayManager
     private lateinit var status: TextView
-    private var presentation: Presentation? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-        status = screen("TELÉFONO / CONTROL", display)
-        setContentView(status)
         dm = getSystemService(DisplayManager::class.java)
         dm.registerDisplayListener(this, null)
-        showExternal()
-    }
-
-    private fun info(d: Display): String {
-        val m = DisplayMetrics(); d.getRealMetrics(m)
-        val mode = d.mode
-        return "Display ID: ${d.displayId}\n${d.name}\n${m.widthPixels} × ${m.heightPixels} · ${m.densityDpi} dpi · ${"%.0f".format(mode.refreshRate)} Hz"
-    }
-
-    private fun screen(title: String, d: Display): TextView = TextView(this).apply {
-        setBackgroundColor(if (title.startsWith("MONITOR")) Color.rgb(12,18,32) else Color.rgb(245,245,245))
-        setTextColor(if (title.startsWith("MONITOR")) Color.WHITE else Color.BLACK)
-        gravity = Gravity.CENTER
-        textSize = 24f
-        text = "$title\n\n${info(d)}"
+        status = TextView(this).apply {
+            gravity = Gravity.CENTER
+            textSize = 24f
+            setBackgroundColor(Color.rgb(245,245,245))
+            setTextColor(Color.BLACK)
+        }
+        setContentView(status)
+        updateStatusAndLaunch()
     }
 
     private fun externalDisplay(): Display? {
@@ -48,65 +44,90 @@ class MainActivity : Activity(), DisplayManager.DisplayListener {
             .maxByOrNull { it.mode.physicalWidth.toLong() * it.mode.physicalHeight }
     }
 
-    private fun launchOnExternal(packageName: String) {
-        val ext = externalDisplay() ?: return
-        val intent = packageManager.getLaunchIntentForPackage(packageName)
-        if (intent == null) {
-            Toast.makeText(this, "$packageName no está instalado", Toast.LENGTH_SHORT).show()
+    private fun info(d: Display): String {
+        val m = DisplayMetrics(); d.getRealMetrics(m)
+        return "Display ${d.displayId} · ${d.name}\n${m.widthPixels} × ${m.heightPixels} · ${m.densityDpi} dpi · ${"%.0f".format(d.mode.refreshRate)} Hz"
+    }
+
+    private fun updateStatusAndLaunch() {
+        val ext = externalDisplay()
+        if (ext == null) {
+            status.text = "TELÉFONO LIBRE\n\nEsperando monitor externo…"
             return
         }
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
-            val options = ActivityOptions.makeBasic().apply { launchDisplayId = ext.displayId }
-            startActivity(intent, options.toBundle())
-        } catch (e: Exception) {
-            Toast.makeText(this, "No se pudo abrir en Display ${ext.displayId}: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
-        }
+        status.text = "TELÉFONO LIBRE\n\nMonitor detectado:\n${info(ext)}\n\nEl escritorio se abrirá en el monitor."
+        launchDesktop(ext)
     }
 
-    private fun externalDesktop(ext: Display): View {
+    private fun launchDesktop(ext: Display) {
+        val intent = Intent(this, ExternalDesktopActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            .putExtra("targetDisplayId", ext.displayId)
+        val options = ActivityOptions.makeBasic().apply { launchDisplayId = ext.displayId }
+        try { startActivity(intent, options.toBundle()) }
+        catch (e: Exception) { status.append("\n\nNo se pudo iniciar escritorio: ${e.javaClass.simpleName}") }
+    }
+
+    override fun onDisplayAdded(displayId: Int) = updateStatusAndLaunch()
+    override fun onDisplayChanged(displayId: Int) { }
+    override fun onDisplayRemoved(displayId: Int) { status.text = "TELÉFONO LIBRE\n\nMonitor desconectado." }
+    override fun onDestroy() { dm.unregisterDisplayListener(this); super.onDestroy() }
+}
+
+class ExternalDesktopActivity : Activity() {
+    private lateinit var dm: DisplayManager
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        dm = getSystemService(DisplayManager::class.java)
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        setContentView(buildDesktop())
+    }
+
+    private fun currentExternal(): Display? {
+        val own = display
+        if (own != null && own.displayId != Display.DEFAULT_DISPLAY) return own
+        val wanted = intent.getIntExtra("targetDisplayId", -1)
+        if (wanted >= 0) dm.getDisplay(wanted)?.let { return it }
+        return dm.displays.firstOrNull { it.displayId != Display.DEFAULT_DISPLAY && it.state != Display.STATE_OFF }
+    }
+
+    private fun launchPackage(packageName: String) {
+        val ext = currentExternal() ?: return
+        val i = packageManager.getLaunchIntentForPackage(packageName)
+        if (i == null) { Toast.makeText(this, "$packageName no está instalado", Toast.LENGTH_SHORT).show(); return }
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+        try {
+            val opts = ActivityOptions.makeBasic().apply { launchDisplayId = ext.displayId }
+            startActivity(i, opts.toBundle())
+        } catch (e: Exception) { Toast.makeText(this, "No se pudo abrir: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show() }
+    }
+
+    private fun launchSettings() {
+        val ext = currentExternal() ?: return
+        try {
+            val opts = ActivityOptions.makeBasic().apply { launchDisplayId = ext.displayId }
+            startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK), opts.toBundle())
+        } catch (e: Exception) { Toast.makeText(this, "Ajustes no pudo abrirse aquí", Toast.LENGTH_LONG).show() }
+    }
+
+    private fun buildDesktop(): View {
+        val ext = currentExternal()
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(48, 48, 48, 48)
-            setBackgroundColor(Color.rgb(12,18,32))
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            setPadding(56,56,56,56); setBackgroundColor(Color.rgb(12,18,32))
         }
         root.addView(TextView(this).apply {
-            text = "MONITOR INTERACTIVO\n${info(ext)}\n\nProbá el mouse sobre estos botones"
-            setTextColor(Color.WHITE); textSize = 24f; gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(-1, 0, 1f))
-        val buttons = LinearLayout(this).apply { gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL }
-        fun button(label: String, action: () -> Unit) = Button(this).apply {
-            text = label; textSize = 18f; isFocusable = true; setOnClickListener { action() }
-            buttons.addView(this, LinearLayout.LayoutParams(0, 90, 1f).apply { setMargins(12,12,12,12) })
-        }
-        button("CHROME") { launchOnExternal("com.android.chrome") }
-        button("YOUTUBE") { launchOnExternal("com.google.android.youtube") }
-        button("AJUSTES") {
-            val options = ActivityOptions.makeBasic().apply { launchDisplayId = ext.displayId }
-            try { startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), options.toBundle()) } catch (_: Exception) {}
-        }
-        root.addView(buttons, LinearLayout.LayoutParams(-1, -2))
+            text = "ESCRITORIO EXTERNO\n${if (ext != null) "Display ${ext.displayId} · ${ext.name}" else "Display externo"}\n\nMové el mouse y elegí una aplicación"
+            setTextColor(Color.WHITE); textSize = 26f; gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1,0,1f))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        fun add(label:String, action:()->Unit) { row.addView(Button(this).apply { text=label; textSize=18f; setOnClickListener{action()} }, LinearLayout.LayoutParams(0,96,1f).apply{setMargins(10,10,10,10)}) }
+        add("CHROME") { launchPackage("com.android.chrome") }
+        add("YOUTUBE") { launchPackage("com.google.android.youtube") }
+        add("AJUSTES") { launchSettings() }
+        add("HOME") { recreate() }
+        root.addView(row, LinearLayout.LayoutParams(-1,-2))
         return root
     }
-
-    private fun showExternal() {
-        val ext = externalDisplay()
-        if (ext == null) { status.text = "TELÉFONO / CONTROL\n\nEsperando monitor externo…"; return }
-        presentation?.dismiss()
-        presentation = object : Presentation(this, ext) {
-            override fun onCreate(savedInstanceState: Bundle?) {
-                super.onCreate(savedInstanceState)
-                window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
-                window?.decorView?.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                setContentView(externalDesktop(display))
-            }
-        }
-        try { presentation?.show() } catch (e: Exception) { status.append("\n\nError externo: ${e.message}") }
-    }
-
-    override fun onDisplayAdded(displayId: Int) = showExternal()
-    override fun onDisplayChanged(displayId: Int) { if (displayId != Display.DEFAULT_DISPLAY && presentation == null) showExternal() }
-    override fun onDisplayRemoved(displayId: Int) { if (presentation?.display?.displayId == displayId) { presentation?.dismiss(); presentation = null } }
-    override fun onDestroy() { dm.unregisterDisplayListener(this); presentation?.dismiss(); super.onDestroy() }
 }
