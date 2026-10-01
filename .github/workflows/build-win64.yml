@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt update
-          sudo apt install -y meson ninja-build nasm mingw-w64 mingw-w64-tools libz-mingw-w64-dev
+          sudo apt install -y meson ninja-build nasm mingw-w64 mingw-w64-tools libz-mingw-w64-dev zip
 
       - name: Build scrcpy client for Windows x64
         working-directory: scrcpy
@@ -47,17 +47,33 @@ jobs:
           stdbuf -oL -eL release/build_windows.sh 64
           echo "[DeX Bridge] build finished"
 
-      - name: Package DeX Bridge Engine
+      - name: Package transparent test bundle
         run: |
           set -euxo pipefail
-          mkdir -p artifact
-          cp -a scrcpy/release/work/build-win64/dist/. artifact/
-          cp README.md artifact/DEX-BRIDGE-README.md
-          ls -lah artifact
+          mkdir -p package/bin package/source-patches
+          cp -a scrcpy/release/work/build-win64/dist/. package/bin/
+          cp README.md package/DEX-BRIDGE-README.md
+          cp tools/patch_dex_bridge.py tools/patch_bridge_state_machine.py package/source-patches/
+          cat > package/VERIFY-BEFORE-RUNNING.txt <<'EOF'
+          DeX Bridge test build
+          =====================
+          This bundle was built by GitHub Actions from scrcpy v4.1 plus the source patches included
+          in source-patches/. It is an unsigned development build, so Windows or a browser may warn
+          about reputation. Do not disable antivirus or SmartScreen globally.
 
-      - name: Upload DeX Bridge Engine
+          SHA256SUMS.txt contains SHA-256 hashes for every executable/DLL in bin/.
+          The GitHub Actions artifact itself also has a GitHub-provided SHA-256 digest in the run metadata.
+          EOF
+          (cd package && find bin -type f \( -iname '*.exe' -o -iname '*.dll' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          zip -r DeX-Bridge-Test-win64.zip package
+          sha256sum DeX-Bridge-Test-win64.zip > DeX-Bridge-Test-win64.zip.sha256
+          ls -lah DeX-Bridge-Test-win64.zip*
+
+      - name: Upload verification package
         uses: actions/upload-artifact@v4
         with:
-          name: DeX-Bridge-Engine-win64
-          path: artifact/
+          name: DeX-Bridge-Test-Package
+          path: |
+            DeX-Bridge-Test-win64.zip
+            DeX-Bridge-Test-win64.zip.sha256
           if-no-files-found: error
