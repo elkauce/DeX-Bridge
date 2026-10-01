@@ -8,6 +8,7 @@ on:
 jobs:
   build-win64:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout DeX Bridge
         uses: actions/checkout@v4
@@ -20,24 +21,33 @@ jobs:
 
       - name: Verify patch
         run: |
+          set -euxo pipefail
           grep -q "dex_bridge_active" scrcpy/app/src/screen.h
           ! grep -q '^[[:space:]]*sc_mouse_capture_set_active(&screen->mc, true);' scrcpy/app/src/screen.c
           grep -q "event->xrel" scrcpy/app/src/input_manager.c
 
       - name: Install build dependencies
         run: |
+          set -euxo pipefail
           sudo apt update
           sudo apt install -y meson ninja-build nasm mingw-w64 mingw-w64-tools libz-mingw-w64-dev
 
       - name: Build scrcpy client for Windows x64
         working-directory: scrcpy
-        run: release/build_windows.sh 64
+        timeout-minutes: 22
+        run: |
+          set -euxo pipefail
+          echo "[DeX Bridge] starting official scrcpy 4.1 Windows x64 build"
+          stdbuf -oL -eL release/build_windows.sh 64
+          echo "[DeX Bridge] build finished"
 
       - name: Package intermediate engine
         run: |
+          set -euxo pipefail
           mkdir -p artifact
           cp -a scrcpy/release/work/build-win64/dist/. artifact/
           cp README.md artifact/DEX-BRIDGE-README.md
+          ls -lah artifact
 
       - name: Upload DeX Bridge Engine
         uses: actions/upload-artifact@v4
