@@ -1,0 +1,30 @@
+name: Build Samsung Dual Display Test
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'dual-display-test/**'
+      - '.github/workflows/build-dual-display-test.yml'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build APK
+        working-directory: dual-display-test
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+      - name: Rename APK
+        run: cp dual-display-test/app/build/outputs/apk/debug/app-debug.apk Samsung-Dual-Display-Test.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Samsung-Dual-Display-Test
+          path: Samsung-Dual-Display-Test.apk
+          retention-days: 14
