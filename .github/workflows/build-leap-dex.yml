@@ -1,0 +1,66 @@
+name: Build leap-scrcpy DeX prototype
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-leap-dex.yml'
+      - 'leap-dex/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout leap-scrcpy upstream
+        uses: actions/checkout@v4
+        with:
+          repository: yume-chan/leap-scrcpy
+          path: upstream
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Apply DeX patch
+        run: python3 leap-dex/patch.py upstream
+
+      - name: Build Android server
+        working-directory: upstream/server
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Build Deskflow client
+        working-directory: upstream
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Prepare portable payload
+        run: |
+          mkdir -p out/server/app/build/outputs/apk/debug
+          cp -r upstream/esm out/
+          cp -r upstream/node_modules out/
+          cp upstream/package.json out/
+          cp upstream/server/app/build/outputs/apk/debug/app-debug.apk out/server/app/build/outputs/apk/debug/
+          cp leap-dex/START-DEX-BRIDGE.cmd out/
+          cp leap-dex/README-TEST.txt out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeX-Bridge-Leap-Prototype
+          path: out
+          retention-days: 14
